@@ -14,6 +14,7 @@
     "authSignIn": "Sign in",
     "authSignUp": "Create account",
     "authEmailTaken": "An account with this email already exists. Try signing in instead.",
+    "authFullName": "Full name",
     "authCheckEmail": "Almost there! Check your email to confirm your account.",
     "authSubmit": "Sign In / Register"
   },

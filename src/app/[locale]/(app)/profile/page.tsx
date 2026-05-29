@@ -1,5 +1,6 @@
 import { createClient } from "@/utils/supabase/server";
 import { ProfileClient } from "@/components/ProfileClient";
+import { LogoutButton } from "@/components/LogoutButton";
 import { Post, Profile } from "@/types";
 import { Link } from "@/i18n/routing";
 import { Button } from "@/components/ui/button";
@@ -14,11 +15,13 @@ export default async function ProfilePage() {
     return (
       <div className="min-h-full p-4">
         <div className="rounded-2xl border border-dashed p-8 text-center space-y-4">
-          <h1 className="text-xl font-semibold">Sign in to manage your profile</h1>
+          <h1 className="text-xl font-semibold">
+            Sign in to manage your profile
+          </h1>
           <p className="text-muted-foreground">
             Update your creator details and manage your posts from one place.
           </p>
-          <Button variant="outline">
+          <Button variant="outline" >
             <Link href="/">Go to sign in</Link>
           </Button>
         </div>
@@ -46,20 +49,26 @@ export default async function ProfilePage() {
       .order("created_at", { ascending: false }),
   ]);
 
-  if (!profile) {
-    return (
-      <div className="min-h-full p-4">
-        <div className="rounded-2xl border border-dashed p-8 text-center text-muted-foreground">
-          Profile not found.
-        </div>
-      </div>
-    );
-  }
+
 
   return (
-    <ProfileClient
-      profile={profile as Profile}
-      posts={(posts || []) as unknown as Post[]}
-    />
+    <div className="min-h-full">
+      {/* Profile header with logout */}
+      <div className="max-w-6xl mx-auto px-4 py-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">
+            {profile?.display_name || "Your Profile"}
+          </h1>
+          <p className="text-sm text-muted-foreground">{user.email}</p>
+        </div>
+        {/* ✅ LogoutButton is a client component — safe inside an RSC */}
+        <LogoutButton />
+      </div>
+
+      <ProfileClient
+        profile={profile as Profile}
+        posts={(posts || []) as unknown as Post[]}
+      />
+    </div>
   );
 }
