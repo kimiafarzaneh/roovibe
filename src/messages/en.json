@@ -1,0 +1,26 @@
+{
+  "Index": {
+    "title": "Discover independent creators around you.",
+    "continue": "Continue",
+    "skip": "Skip and Browse as Guest",
+    "interestsTitle": "What's your vibe?",
+    "interestsSubtitle": "Select 3-5 tags to personalize your feed.",
+    "interestsNext": "Next",
+    "authTitle": "Join RooVibe",
+    "authSubtitle": "Sign in to save posts, follow creators, and chat.",
+    "authGoogle": "Continue with Google",
+    "authEmail": "Email Address",
+    "authPassword": "Password",
+    "authSignIn": "Sign in",
+    "authSignUp": "Create account",
+    "authEmailTaken": "An account with this email already exists. Try signing in instead.",
+    "authCheckEmail": "Almost there! Check your email to confirm your account.",
+    "authSubmit": "Sign In / Register"
+  },
+  "Navigation": {
+    "home": "Home",
+    "explore": "Explore",
+    "create": "Create",
+    "profile": "Profile"
+  }
+}

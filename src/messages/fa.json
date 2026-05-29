@@ -1,0 +1,26 @@
+{
+  "Index": {
+    "title": "خالقان مستقل اطراف خود را کشف کنید.",
+    "continue": "ادامه",
+    "skip": "رد شدن و مرور به عنوان مهمان",
+    "interestsTitle": "حس و حال شما چیست؟",
+    "interestsSubtitle": "۳ تا ۵ برچسب برای شخصی‌سازی فید خود انتخاب کنید.",
+    "interestsNext": "بعدی",
+    "authTitle": "به RooVibe بپیوندید",
+    "authSubtitle": "برای ذخیره پست‌ها، دنبال کردن خالقان و چت وارد شوید.",
+    "authGoogle": "ادامه با گوگل",
+    "authEmail": "آدرس ایمیل",
+    "authPassword": "رمز عبور",
+    "authSignIn": "ورود",
+    "authSignUp": "ثبت‌نام",
+    "authEmailTaken": "یک حساب با این ایمیل وجود دارد. به جای آن، ورود کنید.",
+    "authCheckEmail": "تقریبا همه چیز آماده است! ایمیل خود را برای تایید حساب کنید.",
+    "authSubmit": "ورود / ثبت‌نام"
+  },
+  "Navigation": {
+    "home": "خانه",
+    "explore": "جستجو",
+    "create": "ایجاد",
+    "profile": "پروفایل"
+  }
+}
