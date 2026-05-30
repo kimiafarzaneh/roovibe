@@ -1,267 +1,327 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { supabase } from "@/utils/supabase/client";
-import { Post, Profile } from "@/types";
+import { useLogout } from "@/hooks/useLogout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { PostCard } from "@/components/PostCard";
-import { PostDetailModal } from "@/components/PostDetailModal";
+import { Post, Profile } from "@/types";
+import {
+  Check, Loader2, Pencil, LogOut,
+  MapPin, Phone, Home, Grid2x2,
+} from "lucide-react";
+
+// ─── Schema ───────────────────────────────────────────────────────────────────
+
+const profileSchema = z.object({
+  display_name: z.string().min(2, "At least 2 characters").max(50, "Max 50 characters"),
+  username: z
+    .string().min(3, "At least 3 characters").max(30, "Max 30 characters")
+    .regex(/^[a-zA-Z0-9_]+$/, "Only letters, numbers, underscores"),
+  bio: z.string().max(200, "Max 200 characters").optional().or(z.literal("")),
+  phone: z.string().regex(/^[0-9+]{10,15}$/, "Invalid phone number").optional().or(z.literal("")),
+  city: z.string().max(60).optional().or(z.literal("")),
+  address: z.string().max(200, "Max 200 characters").optional().or(z.literal("")),
+});
+
+type ProfileForm = z.infer<typeof profileSchema>;
+
+// ─── Props ────────────────────────────────────────────────────────────────────
 
 interface ProfileClientProps {
   profile: Profile;
   posts: Post[];
 }
 
-export function ProfileClient({ profile, posts }: ProfileClientProps) {
-  const avatarInputRef = useRef<HTMLInputElement>(null);
-  const [selectedPost, setSelectedPost] = useState<Post | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<{
-    kind: "success" | "error";
-    text: string;
-  } | null>(null);
-  const [form, setForm] = useState({
-    avatar_url: profile.avatar_url || "",
-    display_name: profile.display_name || "",
-    bio: profile.bio || "",
-    city: profile.city || "",
-    telegram_handle: profile.telegram_handle || "",
-    whatsapp_handle: profile.whatsapp_handle || "",
-  });
-  const initialSnapshot = useMemo(
-    () =>
-      JSON.stringify({
-        avatar_url: profile.avatar_url || "",
-        display_name: profile.display_name || "",
-        bio: profile.bio || "",
-        city: profile.city || "",
-        telegram_handle: profile.telegram_handle || "",
-        whatsapp_handle: profile.whatsapp_handle || "",
-      }),
-    [profile]
-  );
-  const currentSnapshot = JSON.stringify(form);
-  const isDirty = initialSnapshot !== currentSnapshot;
+// ─── Component ────────────────────────────────────────────────────────────────
 
-  const handleSave = async () => {
-    setStatusMessage(null);
-    setSaving(true);
+export function ProfileClient({ profile, posts }: ProfileClientProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [serverError, setServerError] = useState<string | null>(null);
+  const { logoutUser, isPending: isLoggingOut } = useLogout();
+
+  const { register, handleSubmit, formState: { errors, isDirty, isSubmitting }, watch, reset } =
+    useForm<ProfileForm>({
+      resolver: zodResolver(profileSchema),
+      defaultValues: {
+        display_name: profile.display_name || "",
+        username: profile.username || "",
+        bio: profile.bio || "",
+        phone: profile.phone || "",
+        city: profile.city || "",
+        address: profile.address || "",
+      },
+    });
+
+  const onSubmit = async (data: ProfileForm) => {
+    setServerError(null);
     const { error } = await supabase
       .from("profiles")
       .update({
-        avatar_url: form.avatar_url || null,
-        display_name: form.display_name,
-        bio: form.bio,
-        city: form.city,
-        telegram_handle: form.telegram_handle || null,
-        whatsapp_handle: form.whatsapp_handle || null,
+        display_name: data.display_name,
+        username: data.username.toLowerCase(),
+        bio: data.bio || null,
+        phone: data.phone || null,
+        city: data.city || null,
+        address: data.address || null,
+        updated_at: new Date().toISOString(),
       })
       .eq("id", profile.id);
 
     if (error) {
-      console.error(error);
-      setStatusMessage({ kind: "error", text: "Could not save profile details." });
-    } else {
-      setStatusMessage({ kind: "success", text: "Profile updated successfully." });
-      setEditing(false);
-    }
-    setSaving(false);
-  };
-
-  const handlePresetAvatar = (url: string) => {
-    setForm((prev) => ({ ...prev, avatar_url: url }));
-  };
-
-  const handleAvatarUpload = async (file: File) => {
-    const ext = file.name.split(".").pop() || "jpg";
-    const fileName = `avatar-${profile.id}-${Date.now()}.${ext}`;
-
-    const { data, error } = await supabase.storage.from("posts").upload(fileName, file, {
-      upsert: true,
-    });
-    if (error) {
-      setStatusMessage({ kind: "error", text: "Avatar upload failed." });
+      if (error.message.includes("profiles_username_key")) {
+        setServerError("This username is already taken.");
+      } else {
+        setServerError(error.message);
+      }
       return;
     }
-    const { data: urlData } = supabase.storage.from("posts").getPublicUrl(data.path);
-    setForm((prev) => ({ ...prev, avatar_url: urlData.publicUrl }));
-    setStatusMessage({ kind: "success", text: "Avatar uploaded. Save to apply." });
+
+    setSaved(true);
+    setIsEditing(false);
+    // Update form defaults so isDirty resets correctly
+    reset(data);
+    setTimeout(() => setSaved(false), 3000);
   };
 
-  return (
-    <div className="min-h-full px-4 py-4 space-y-6">
-      <section className="rounded-2xl border bg-card p-4 space-y-4">
-        <div className="flex items-center gap-3">
-          <div className="size-12 rounded-full bg-primary/10 overflow-hidden flex items-center justify-center text-primary font-semibold">
-            {form.avatar_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={form.avatar_url} alt="Profile avatar" className="w-full h-full object-cover" />
-            ) : (
-              form.display_name?.[0]?.toUpperCase() || "U"
+  const handleCancelEdit = () => {
+    reset(); // revert to defaultValues
+    setServerError(null);
+    setIsEditing(false);
+  };
+
+  // Current display values (use form watch so edit-mode changes reflect immediately)
+  const currentValues = isEditing
+    ? watch()
+    : {
+        display_name: profile.display_name || "",
+        username: profile.username || "",
+        bio: profile.bio || "",
+        phone: profile.phone || "",
+        city: profile.city || "",
+        address: profile.address || "",
+      };
+
+  // ─── View mode ───────────────────────────────────────────────────────────
+
+  if (!isEditing) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 pb-12 space-y-8">
+
+        {/* Profile card */}
+        <div className="rounded-2xl border bg-card p-6 space-y-4">
+
+          {/* Top row: avatar placeholder + name + actions */}
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-center gap-4">
+              {/* Avatar circle — initials for now */}
+              <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center text-primary text-xl font-bold shrink-0">
+                {currentValues.display_name?.[0]?.toUpperCase() || "?"}
+              </div>
+              <div>
+                <h2 className="text-xl font-bold leading-tight">
+                  {currentValues.display_name || "—"}
+                </h2>
+                {currentValues.username && (
+                  <p className="text-sm text-muted-foreground">@{currentValues.username}</p>
+                )}
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex gap-2 shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsEditing(true)}
+                className="gap-1.5"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                Edit
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => logoutUser()}
+                disabled={isLoggingOut}
+                className="gap-1.5 text-destructive hover:text-destructive"
+              >
+                {isLoggingOut
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <LogOut className="w-3.5 h-3.5" />
+                }
+                Sign out
+              </Button>
+            </div>
+          </div>
+
+          {/* Bio */}
+          {currentValues.bio && (
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              {currentValues.bio}
+            </p>
+          )}
+
+          {/* Info rows */}
+          <div className="space-y-2 pt-1">
+            {currentValues.city && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <MapPin className="w-4 h-4 shrink-0" />
+                {currentValues.city}
+              </div>
+            )}
+            {currentValues.phone && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Phone className="w-4 h-4 shrink-0" />
+                {currentValues.phone}
+              </div>
+            )}
+            {currentValues.address && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Home className="w-4 h-4 shrink-0" />
+                {currentValues.address}
+              </div>
             )}
           </div>
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">Your profile</h1>
-            <p className="text-sm text-muted-foreground">Keep your storefront details updated.</p>
-          </div>
-          <div className="ms-auto">
-            <Button variant={editing ? "outline" : "default"} onClick={() => setEditing((x) => !x)}>
-              {editing ? "Cancel edit" : "Edit profile"}
-            </Button>
-          </div>
-        </div>
 
-        {!editing && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-            <div>
-              <p className="text-muted-foreground">Display name</p>
-              <p className="font-medium">{form.display_name || "-"}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">City</p>
-              <p className="font-medium">{form.city || "-"}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Telegram</p>
-              <p className="font-medium">{form.telegram_handle || "-"}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">WhatsApp</p>
-              <p className="font-medium">{form.whatsapp_handle || "-"}</p>
-            </div>
-            <div className="md:col-span-2">
-              <p className="text-muted-foreground">Bio</p>
-              <p className="font-medium">{form.bio || "-"}</p>
+          {/* Stats */}
+          <div className="flex gap-4 pt-2 border-t">
+            <div className="text-center">
+              <p className="text-lg font-bold">{posts.length}</p>
+              <p className="text-xs text-muted-foreground">Posts</p>
             </div>
           </div>
-        )}
 
-        {editing && (
-          <>
-        <div className="space-y-2">
-          <Label>Avatar</Label>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" size="sm" variant="outline" onClick={() => handlePresetAvatar("/avatars/man.svg")}>
-              Man Avatar
-            </Button>
-            <Button type="button" size="sm" variant="outline" onClick={() => handlePresetAvatar("/avatars/woman.svg")}>
-              Woman Avatar
-            </Button>
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              ref={avatarInputRef}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) handleAvatarUpload(file);
-              }}
-              id="avatar-upload"
-            />
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => avatarInputRef.current?.click()}
-            >
-              Upload Photo
-            </Button>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div className="space-y-2">
-            <Label htmlFor="display_name">Display name</Label>
-            <Input
-              id="display_name"
-              value={form.display_name}
-              onChange={(e) => setForm((prev) => ({ ...prev, display_name: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="city">City</Label>
-            <Input
-              id="city"
-              value={form.city}
-              onChange={(e) => setForm((prev) => ({ ...prev, city: e.target.value }))}
-            />
-          </div>
+          {/* Saved confirmation */}
+          {saved && (
+            <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
+              <Check className="w-4 h-4" /> Profile saved successfully
+            </div>
+          )}
         </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="bio">Bio</Label>
-          <Textarea
-            id="bio"
-            value={form.bio}
-            onChange={(e) => setForm((prev) => ({ ...prev, bio: e.target.value }))}
-            rows={3}
-          />
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div className="space-y-2">
-            <Label htmlFor="telegram_handle">Telegram</Label>
-            <Input
-              id="telegram_handle"
-              placeholder="username without @"
-              value={form.telegram_handle}
-              onChange={(e) =>
-                setForm((prev) => ({ ...prev, telegram_handle: e.target.value }))
-              }
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="whatsapp_handle">WhatsApp</Label>
-            <Input
-              id="whatsapp_handle"
-              placeholder="98xxxxxxxxxx"
-              value={form.whatsapp_handle}
-              onChange={(e) =>
-                setForm((prev) => ({ ...prev, whatsapp_handle: e.target.value }))
-              }
-            />
-          </div>
-        </div>
-
-        <Button onClick={handleSave} disabled={saving || !isDirty}>
-          {saving ? "Saving..." : "Save profile"}
-        </Button>
-        </>
-        )}
-        {statusMessage && (
-          <p
-            className={`text-sm ${
-              statusMessage.kind === "success" ? "text-emerald-600" : "text-destructive"
-            }`}
-          >
-            {statusMessage.text}
-          </p>
-        )}
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold tracking-tight">Your posts</h2>
+        {/* Posts grid */}
         {posts.length > 0 ? (
-          <div className="columns-2 md:columns-3 lg:columns-4 gap-4 space-y-4">
-            {posts.map((post) => (
-              <PostCard key={post.id} post={post} onClick={(p) => setSelectedPost(p)} />
-            ))}
+          <div>
+            <div className="flex items-center gap-2 mb-4">
+              <Grid2x2 className="w-4 h-4 text-muted-foreground" />
+              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                Your Posts
+              </h3>
+            </div>
+            <div className="columns-2 md:columns-3 gap-4">
+              {posts.map((post) => (
+                <div key={post.id} className="break-inside-avoid mb-4">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={post.post_images?.[0]?.image_url || post.image_url || ""}
+                    alt={post.title}
+                    className={`w-full h-auto rounded-2xl block ${post.css_filter || ""}`}
+                  />
+                  <p className="text-xs font-medium mt-1.5 px-0.5 line-clamp-1">{post.title}</p>
+                </div>
+              ))}
+            </div>
           </div>
         ) : (
           <div className="rounded-2xl border border-dashed p-8 text-center text-muted-foreground">
-            No posts yet. Go to Create tab and publish your first product.
+            <p className="text-sm">You haven't posted anything yet.</p>
           </div>
         )}
-      </section>
+      </div>
+    );
+  }
 
-      <PostDetailModal
-        post={selectedPost}
-        isOpen={selectedPost !== null}
-        onClose={() => setSelectedPost(null)}
-      />
+  // ─── Edit mode ───────────────────────────────────────────────────────────
+
+  return (
+    <div className="max-w-2xl mx-auto px-4 pb-12">
+
+      {/* Edit header */}
+      <div className="flex items-center justify-between py-4 mb-2">
+        <h2 className="text-lg font-bold">Edit Profile</h2>
+        <Button variant="ghost" size="sm" onClick={handleCancelEdit}>
+          Cancel
+        </Button>
+      </div>
+
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-5" noValidate>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="display_name">Display name <span className="text-destructive">*</span></Label>
+          <Input id="display_name" placeholder="How buyers see your name" {...register("display_name")} aria-invalid={!!errors.display_name} />
+          {errors.display_name && <p className="text-xs text-destructive">{errors.display_name.message}</p>}
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="username">Username <span className="text-destructive">*</span></Label>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">@</span>
+            <Input id="username" placeholder="your_username" className="pl-7" {...register("username")} aria-invalid={!!errors.username} />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            roovibe.com/@{watch("username") || "your_username"}
+          </p>
+          {errors.username && <p className="text-xs text-destructive">{errors.username.message}</p>}
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="bio">
+            Bio
+            <span className="text-muted-foreground font-normal ml-1">({watch("bio")?.length ?? 0}/200)</span>
+          </Label>
+          <Textarea id="bio" placeholder="Tell buyers about yourself..." rows={3} {...register("bio")} />
+          {errors.bio && <p className="text-xs text-destructive">{errors.bio.message}</p>}
+        </div>
+
+        <hr className="border-dashed" />
+
+        <div className="space-y-1.5">
+          <Label htmlFor="phone">Phone number</Label>
+          <Input id="phone" type="tel" placeholder="09xxxxxxxxx" {...register("phone")} aria-invalid={!!errors.phone} />
+          {errors.phone && <p className="text-xs text-destructive">{errors.phone.message}</p>}
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="city">City</Label>
+          <Input id="city" placeholder="e.g. Tehran, Isfahan..." {...register("city")} />
+          {errors.city && <p className="text-xs text-destructive">{errors.city.message}</p>}
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="address">Shop / Studio address</Label>
+          <Textarea id="address" placeholder="Full address if you have a physical location (optional)" rows={2} {...register("address")} />
+          {errors.address && <p className="text-xs text-destructive">{errors.address.message}</p>}
+        </div>
+
+        {serverError && (
+          <div className="rounded-xl bg-destructive/10 border border-destructive/20 p-3">
+            <p className="text-sm text-destructive">{serverError}</p>
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" className="flex-1" onClick={handleCancelEdit}>
+            Cancel
+          </Button>
+          <Button type="submit" className="flex-1" disabled={isSubmitting || !isDirty}>
+            {isSubmitting
+              ? <span className="flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Saving...</span>
+              : "Save changes"
+            }
+          </Button>
+        </div>
+
+        {!isDirty && (
+          <p className="text-xs text-center text-muted-foreground">No unsaved changes</p>
+        )}
+      </form>
     </div>
   );
 }

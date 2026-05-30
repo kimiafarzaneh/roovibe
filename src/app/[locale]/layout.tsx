@@ -7,6 +7,7 @@ import { notFound } from "next/navigation";
 import "../globals.css";
 import Providers from "@/providers/queryProvider";
 import { Header } from "@/components/Header";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -49,11 +50,13 @@ export default async function LocaleLayout({
       <body className="min-h-full flex flex-col font-sans">
         <NextIntlClientProvider messages={messages}>
           <Providers>
+        <ErrorBoundary>
             {/* Header is inside Providers so it can use useUser/useLogout */}
             <Header />
             <main className="flex-1 flex flex-col">
               {children}
             </main>
+          </ErrorBoundary>
           </Providers>
         </NextIntlClientProvider>
       </body>

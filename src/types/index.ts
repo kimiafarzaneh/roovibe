@@ -1,4 +1,7 @@
 export type Profile = {
+  address: string;
+  phone: string;
+  username: string;
   id: string;
   display_name: string | null;
   avatar_url: string | null;

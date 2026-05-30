@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import Cropper from "react-easy-crop";
 import { supabase } from "@/utils/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -9,7 +12,37 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { getCroppedImg } from "@/utils/cropImage";
-import { Upload, Crop, Wand2, Check, Image as ImageIcon } from "lucide-react";
+import {
+  Upload, Crop, Wand2, Check, Image as ImageIcon,
+  X, ChevronLeft, ChevronRight, ChevronDown, Search,
+} from "lucide-react";
+
+// ─── Schema ───────────────────────────────────────────────────────────────────
+
+const detailsSchema = z.object({
+  title: z.string().min(3, "At least 3 characters").max(80, "Max 80 characters"),
+  price: z
+    .string()
+    .optional()
+    .refine((v) => !v || (!isNaN(Number(v)) && Number(v) > 0), "Must be a positive number"),
+  story: z.string().max(500, "Max 500 characters").optional(),
+  sms: z
+    .string().optional()
+    .refine((v) => !v || /^[0-9+]{10,15}$/.test(v), "Invalid phone number"),
+  telegram: z
+    .string().optional()
+    .refine((v) => !v || /^[a-zA-Z0-9_]{3,32}$/.test(v), "Invalid username (no @)"),
+  whatsapp: z
+    .string().optional()
+    .refine((v) => !v || /^[0-9+]{10,15}$/.test(v), "Invalid WhatsApp number"),
+}).refine((d) => d.sms || d.telegram || d.whatsapp, {
+  message: "Provide at least one contact method",
+  path: ["sms"],
+});
+
+type DetailsForm = z.infer<typeof detailsSchema>;
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const FILTERS = [
   { name: "Normal", class: "" },
@@ -27,247 +60,397 @@ const ASPECT_RATIOS = [
   { label: "16:9", value: 16 / 9 },
 ];
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 type UploadImage = {
   id: string;
   originalFile: File;
   originalSrc: string;
   croppedSrc: string | null;
   croppedBlob: Blob | null;
+  filter: string;
 };
 
-type Tag = {
-  id: number;
-  name: string;
-};
+type Tag = { id: number; name: string };
+
+// ─── Tags Dropdown ────────────────────────────────────────────────────────────
+
+function TagsDropdown({
+  tags,
+  selectedIds,
+  onToggle,
+}: {
+  tags: Tag[];
+  selectedIds: number[];
+  onToggle: (id: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const filtered = tags.filter((t) =>
+    t.name.toLowerCase().includes(query.toLowerCase())
+  );
+  const selectedNames = tags
+    .filter((t) => selectedIds.includes(t.id))
+    .map((t) => t.name);
+
+  return (
+    <div ref={ref} className="relative">
+      {/* Trigger */}
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between rounded-lg border bg-background px-3 py-2 text-sm hover:bg-muted/50 transition-colors"
+      >
+        <span className="text-left truncate">
+          {selectedNames.length === 0
+            ? "Select tags..."
+            : selectedNames.join(", ")}
+        </span>
+        <ChevronDown className={`w-4 h-4 shrink-0 ml-2 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {/* Dropdown panel */}
+      {open && (
+        <div className="absolute z-50 mt-1 w-full rounded-xl border bg-popover shadow-lg overflow-hidden">
+          {/* Search inside dropdown */}
+          <div className="p-2 border-b">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <input
+                autoFocus
+                placeholder="Search tags..."
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 text-sm bg-muted/50 rounded-md outline-none"
+              />
+            </div>
+          </div>
+
+          {/* Options list */}
+          <div className="max-h-48 overflow-y-auto p-1">
+            {filtered.length === 0 ? (
+              <p className="text-xs text-muted-foreground p-2 text-center">No tags found</p>
+            ) : (
+              filtered.map((tag) => {
+                const selected = selectedIds.includes(tag.id);
+                return (
+                  <button
+                    key={tag.id}
+                    type="button"
+                    onClick={() => onToggle(tag.id)}
+                    className={`w-full flex items-center justify-between px-3 py-2 text-sm rounded-lg transition-colors ${
+                      selected
+                        ? "bg-primary/10 text-primary font-medium"
+                        : "hover:bg-muted"
+                    }`}
+                  >
+                    {tag.name}
+                    {selected && <Check className="w-3.5 h-3.5" />}
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          {/* Selected count footer */}
+          {selectedIds.length > 0 && (
+            <div className="px-3 py-2 border-t bg-muted/30">
+              <p className="text-xs text-muted-foreground">
+                {selectedIds.length} selected
+                <button
+                  type="button"
+                  className="ml-2 text-destructive hover:underline"
+                  onClick={() => selectedIds.forEach(onToggle)}
+                >
+                  Clear all
+                </button>
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export function ImagePublisher() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // ✅ Separate ref for the "add more" input — accepts additional files
+  const addMoreInputRef = useRef<HTMLInputElement>(null);
 
-  const [step, setStep] = useState(0); // 0: Upload, 1: Crop, 2: Filter, 3: Meta
+  const [step, setStep] = useState<0 | 1 | 2 | 3>(0);
   const [images, setImages] = useState<UploadImage[]>([]);
-  const [activeImageIndex, setActiveImageIndex] = useState(0);
-  const activeImage = images[activeImageIndex] || null;
+  const [activeIdx, setActiveIdx] = useState(0);
+  const activeImage = images[activeIdx] ?? null;
 
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<{
-    x: number;
-    y: number;
-    width: number;
-    height: number;
+    x: number; y: number; width: number; height: number;
   } | null>(null);
   const [selectedAspect, setSelectedAspect] = useState<number | undefined>(4 / 5);
 
-  const [selectedFilter, setSelectedFilter] = useState(FILTERS[0].class);
-  const [title, setTitle] = useState("");
-  const [story, setStory] = useState("");
-  const [price, setPrice] = useState("");
   const [tags, setTags] = useState<Tag[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
-  const [tagQuery, setTagQuery] = useState("");
-  const [contactMethods, setContactMethods] = useState({
-    sms: false,
-    telegram: false,
-    whatsapp: false,
-  });
-  const [contactValues, setContactValues] = useState({
-    sms: "",
-    telegram: "",
-    whatsapp: "",
-  });
   const [loading, setLoading] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
+
+  const { register, handleSubmit, formState: { errors }, watch } = useForm<DetailsForm>({
+    resolver: zodResolver(detailsSchema),
+    defaultValues: { title: "", price: "", story: "", sms: "", telegram: "", whatsapp: "" },
+  });
 
   useEffect(() => {
-    async function loadTags() {
-      const { data, error } = await supabase.from("tags").select("id,name").order("name");
-      if (error) {
-        console.error(error);
-        return;
-      }
-      setTags((data || []) as Tag[]);
-    }
-    loadTags();
-  }, [supabase]);
-
-  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      const files = Array.from(e.target.files);
-      const newImages = files.map((file, index) => ({
-        id: `${Date.now()}-${index}`,
-        originalFile: file,
-        originalSrc: URL.createObjectURL(file),
-        croppedSrc: null,
-        croppedBlob: null,
-      }));
-      setImages(newImages);
-      setActiveImageIndex(0);
-      setStep(1);
-    }
-  };
-
-  const onCropComplete = useCallback((_: unknown, croppedPixels: unknown) => {
-    setCroppedAreaPixels(croppedPixels as { x: number; y: number; width: number; height: number });
+    supabase.from("tags").select("id,name").order("name")
+      .then(({ data }) => setTags((data || []) as Tag[]));
   }, []);
 
-  const handleCropSave = async () => {
-    if (!activeImage || !croppedAreaPixels) return;
-    const croppedImageBlob = await getCroppedImg(activeImage.originalSrc, croppedAreaPixels);
-    if (!croppedImageBlob) return;
+  // ─── File handlers ──────────────────────────────────────────────────────
 
+  const filesToImages = (files: File[]): UploadImage[] =>
+    files.map((file, i) => ({
+      id: `${Date.now()}-${i}`,
+      originalFile: file,
+      originalSrc: URL.createObjectURL(file),
+      croppedSrc: null,
+      croppedBlob: null,
+      filter: "",
+    }));
+
+  // Initial selection — replaces everything
+  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files?.length) return;
+    const newImages = filesToImages(Array.from(e.target.files));
+    setImages(newImages);
+    setActiveIdx(0);
+    resetCropState();
+    setStep(1);
+    e.target.value = ""; // reset so same file can be re-selected
+  };
+
+  // ✅ Add more images — APPENDS to existing, does not replace
+  const onAddMore = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files?.length) return;
+    const newImages = filesToImages(Array.from(e.target.files));
+    setImages((prev) => [...prev, ...newImages]);
+    // Jump to first new image
+    setActiveIdx((prev) => prev); // stay on current
+    e.target.value = "";
+  };
+
+  const removeImage = (id: string) => {
+    setImages((prev) => {
+      const next = prev.filter((img) => img.id !== id);
+      if (next.length === 0) { setStep(0); return next; }
+      setActiveIdx((i) => Math.min(i, next.length - 1));
+      return next;
+    });
+  };
+
+  // ─── Crop ────────────────────────────────────────────────────────────────
+
+  const resetCropState = () => {
+    setCrop({ x: 0, y: 0 });
+    setZoom(1);
+    setCroppedAreaPixels(null);
+  };
+
+  const switchToImage = (idx: number) => {
+    setActiveIdx(idx);
+    resetCropState();
+  };
+
+  const onCropComplete = useCallback((_: unknown, pixels: unknown) => {
+    setCroppedAreaPixels(pixels as { x: number; y: number; width: number; height: number });
+  }, []);
+
+  // Crop the current image and stay on crop step
+  const cropCurrent = async () => {
+    if (!activeImage || !croppedAreaPixels) return;
+    const blob = await getCroppedImg(activeImage.originalSrc, croppedAreaPixels);
+    if (!blob) return;
     setImages((prev) =>
-      prev.map((img, idx) =>
-        idx === activeImageIndex
-          ? {
-              ...img,
-              croppedBlob: croppedImageBlob,
-              croppedSrc: URL.createObjectURL(croppedImageBlob),
-            }
+      prev.map((img, i) =>
+        i === activeIdx
+          ? { ...img, croppedBlob: blob, croppedSrc: URL.createObjectURL(blob) }
           : img
       )
     );
-
-    setStep(2);
   };
 
-  const toggleTag = (tagId: number) => {
-    setSelectedTagIds((prev) =>
-      prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]
+  // Crop current then advance to next uncropped, or go to filter step
+  const cropAndAdvance = async () => {
+    await cropCurrent();
+    const nextUncropped = images.findIndex((img, i) => i !== activeIdx && !img.croppedSrc);
+    if (nextUncropped !== -1) {
+      switchToImage(nextUncropped);
+    } else {
+      setStep(2);
+    }
+  };
+
+  // ─── Filter ──────────────────────────────────────────────────────────────
+
+  const setFilterForActive = (cls: string) => {
+    setImages((prev) =>
+      prev.map((img, i) => (i === activeIdx ? { ...img, filter: cls } : img))
     );
   };
 
-  const filteredTags = tags.filter((tag) =>
-    tag.name.toLowerCase().includes(tagQuery.trim().toLowerCase())
-  );
+  // ─── Publish ─────────────────────────────────────────────────────────────
 
-  const toggleContactMethod = (key: "sms" | "telegram" | "whatsapp") => {
-    setContactMethods((prev) => ({
-      ...prev,
-      [key]: !prev[key],
-    }));
-  };
-
-  const buildContactInfo = () => {
-    const payload: Record<string, string> = {};
-    if (contactMethods.sms && contactValues.sms.trim()) payload.sms = contactValues.sms.trim();
-    if (contactMethods.telegram && contactValues.telegram.trim())
-      payload.telegram = contactValues.telegram.trim();
-    if (contactMethods.whatsapp && contactValues.whatsapp.trim())
-      payload.whatsapp = contactValues.whatsapp.trim();
-    return payload;
-  };
-
-  const handlePublish = async () => {
-    if (!title || images.length === 0) return;
+  const onSubmit = async (formData: DetailsForm) => {
+    if (images.length === 0) return;
     setLoading(true);
+    setPublishError(null);
 
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
       const imageUploads = await Promise.all(
         images.map(async (image, index) => {
-          const uploadBlob = image.croppedBlob || image.originalFile;
+          const blob = image.croppedBlob || image.originalFile;
           const fileName = `${user.id}-${Date.now()}-${index}.jpg`;
-
-          const { data: uploadData, error: uploadError } = await supabase.storage
-            .from("posts")
-            .upload(fileName, uploadBlob, {
-              contentType: "image/jpeg",
-            });
-
-          if (uploadError) throw uploadError;
-
-          const {
-            data: { publicUrl },
-          } = supabase.storage.from("posts").getPublicUrl(uploadData.path);
-
-          return {
-            image_url: publicUrl,
-            display_order: index,
-          };
+          const { data: uploadData, error } = await supabase.storage
+            .from("posts").upload(fileName, blob, { contentType: "image/jpeg" });
+          if (error) throw error;
+          const { data: { publicUrl } } = supabase.storage.from("posts").getPublicUrl(uploadData.path);
+          return { image_url: publicUrl, display_order: index, filter: image.filter };
         })
       );
 
-      const contactInfo = buildContactInfo();
-      const primaryTagId = selectedTagIds[0] ?? null;
+      const contactInfo: Record<string, string> = {};
+      if (formData.sms?.trim()) contactInfo.sms = formData.sms.trim();
+      if (formData.telegram?.trim()) contactInfo.telegram = formData.telegram.trim();
+      if (formData.whatsapp?.trim()) contactInfo.whatsapp = formData.whatsapp.trim();
 
       const { data: postData, error: postError } = await supabase
         .from("posts")
         .insert({
           creator_id: user.id,
-          title,
-          story,
-          price: price ? parseFloat(price) : null,
-          css_filter: selectedFilter,
-          primary_tag_id: primaryTagId,
+          title: formData.title,
+          story: formData.story || null,
+          price: formData.price ? parseFloat(formData.price) : null,
+          css_filter: imageUploads[0]?.filter || "",
+          primary_tag_id: selectedTagIds[0] ?? null,
           contact_info: Object.keys(contactInfo).length ? contactInfo : null,
         })
-        .select()
-        .single();
-
+        .select().single();
       if (postError) throw postError;
 
-      const { error: postImagesError } = await supabase.from("post_images").insert(
+      const { error: imagesError } = await supabase.from("post_images").insert(
         imageUploads.map((img) => ({
-          post_id: postData.id,
-          image_url: img.image_url,
-          display_order: img.display_order,
+          post_id: postData.id, image_url: img.image_url, display_order: img.display_order,
         }))
       );
-      if (postImagesError) throw postImagesError;
+      if (imagesError) throw imagesError;
 
       if (selectedTagIds.length > 0) {
-        const { error: postTagsError } = await supabase.from("post_tags").insert(
-          selectedTagIds.map((tagId) => ({
-            post_id: postData.id,
-            tag_id: tagId,
-          }))
+        const { error: tagsError } = await supabase.from("post_tags").insert(
+          selectedTagIds.map((tagId) => ({ post_id: postData.id, tag_id: tagId }))
         );
-        if (postTagsError) throw postTagsError;
+        if (tagsError) throw tagsError;
       }
 
       router.push("/feed");
       router.refresh();
-    } catch (error) {
-      console.error(error);
-      alert("Error publishing post");
+    } catch (err) {
+      setPublishError(err instanceof Error ? err.message : "Publishing failed");
     } finally {
       setLoading(false);
     }
   };
 
+  // ─── Helpers ─────────────────────────────────────────────────────────────
+
   const activePreviewSrc = activeImage?.croppedSrc || activeImage?.originalSrc || null;
+  const croppedCount = images.filter((img) => img.croppedSrc).length;
+  const stepLabel = ["Publish", "Crop", "Filter", "Details"][step];
+
+  // ─── Thumbnail strip (shared between crop + filter steps) ─────────────────
+
+  const ThumbnailStrip = () => (
+    <div className="px-4 py-2 flex gap-2 overflow-x-auto shrink-0 border-t">
+      {images.map((img, i) => (
+        <div key={img.id} className="relative shrink-0">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={img.croppedSrc || img.originalSrc}
+            alt={`Image ${i + 1}`}
+            onClick={() => switchToImage(i)}
+            className={`w-14 h-14 object-cover rounded-xl cursor-pointer ring-2 ring-offset-1 transition-all ${
+              i === activeIdx ? "ring-primary scale-105" : "ring-transparent opacity-50"
+            } ${img.filter}`}
+          />
+          {/* Green tick = already cropped */}
+          {img.croppedSrc && (
+            <div className="absolute bottom-0.5 right-0.5 bg-green-500 rounded-full p-0.5 pointer-events-none">
+              <Check className="w-2 h-2 text-white" />
+            </div>
+          )}
+          {/* Remove */}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); removeImage(img.id); }}
+            className="absolute -top-1.5 -right-1.5 bg-destructive rounded-full p-0.5"
+          >
+            <X className="w-2.5 h-2.5 text-white" />
+          </button>
+        </div>
+      ))}
+
+      {/* ✅ Add more — uses separate input ref that APPENDS */}
+      <button
+        type="button"
+        onClick={() => addMoreInputRef.current?.click()}
+        className="w-14 h-14 shrink-0 rounded-xl border-2 border-dashed flex items-center justify-center text-muted-foreground hover:bg-muted/50 transition-colors"
+      >
+        <Upload className="w-4 h-4" />
+      </button>
+    </div>
+  );
+
+  // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-full bg-background relative max-w-lg mx-auto w-full border-x">
-      <header className="flex items-center justify-between p-4 border-b">
-        <h1 className="font-bold text-lg">
-          {step === 0 && "Publish"}
-          {step === 1 && "Crop Images"}
-          {step === 2 && "Add Filter"}
-          {step === 3 && "Details"}
-        </h1>
-        {step > 0 && (
-          <Button variant="ghost" size="sm" onClick={() => setStep(step - 1)}>
-            Back
-          </Button>
-        )}
+    <div className="flex flex-col h-full bg-background max-w-lg mx-auto w-full border-x">
+
+      {/* Hidden inputs */}
+      <input type="file" accept="image/*" multiple ref={fileInputRef} onChange={onFileChange} className="hidden" />
+      <input type="file" accept="image/*" multiple ref={addMoreInputRef} onChange={onAddMore} className="hidden" />
+
+      {/* Header */}
+      <header className="flex items-center justify-between px-4 h-14 border-b shrink-0">
+        <h1 className="font-bold text-lg">{stepLabel}</h1>
+        <div className="flex items-center gap-2">
+          {step > 0 && (
+            <Button variant="ghost" size="sm" onClick={() => setStep((s) => (s - 1) as 0 | 1 | 2 | 3)}>
+              Back
+            </Button>
+          )}
+        </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto overflow-x-hidden flex flex-col relative">
+      <div className="flex-1 overflow-y-auto flex flex-col min-h-0">
+
+        {/* ── Step 0: Upload ─────────────────────────────────────────────── */}
         {step === 0 && (
-          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={onFileChange}
-              className="hidden"
-              ref={fileInputRef}
-            />
+          <div className="flex-1 flex flex-col items-center justify-center p-6">
             <div
               className="w-full aspect-[4/5] border-2 border-dashed rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:bg-muted/50 transition-colors"
               onClick={() => fileInputRef.current?.click()}
@@ -276,26 +459,32 @@ export function ImagePublisher() {
                 <Upload className="w-8 h-8" />
               </div>
               <h3 className="font-bold text-lg">Select Photos</h3>
-              <p className="text-muted-foreground text-sm mt-1">You can upload multiple images</p>
+              <p className="text-muted-foreground text-sm mt-1">Tap to select one or more images</p>
             </div>
           </div>
         )}
 
+        {/* ── Step 1: Crop ──────────────────────────────────────────────── */}
         {step === 1 && activeImage && (
-          <div className="flex-1 flex flex-col">
-            <div className="px-4 pt-3 flex gap-2 overflow-x-auto">
-              {ASPECT_RATIOS.map((ratio) => (
+          <div className="flex-1 flex flex-col min-h-0">
+
+            {/* Aspect ratio pills */}
+            <div className="px-4 pt-3 pb-2 flex gap-2 overflow-x-auto shrink-0">
+              {ASPECT_RATIOS.map((r) => (
                 <Button
-                  key={ratio.label}
-                  variant={selectedAspect === ratio.value ? "default" : "outline"}
+                  key={r.label}
+                  variant={selectedAspect === r.value ? "default" : "outline"}
                   size="sm"
-                  onClick={() => setSelectedAspect(ratio.value)}
+                  className="shrink-0"
+                  onClick={() => setSelectedAspect(r.value)}
                 >
-                  {ratio.label}
+                  {r.label}
                 </Button>
               ))}
             </div>
-            <div className="relative aspect-[4/5] flex-1 bg-black">
+
+            {/* Cropper canvas */}
+            <div className="relative aspect-square bg-black mx-4 rounded-2xl overflow-hidden shrink-0">
               <Cropper
                 image={activeImage.originalSrc}
                 crop={crop}
@@ -306,62 +495,78 @@ export function ImagePublisher() {
                 onZoomChange={setZoom}
               />
             </div>
-            <div className="p-4 border-t bg-background space-y-2">
-              <p className="text-xs text-muted-foreground">
-                Image {activeImageIndex + 1} of {images.length}
-              </p>
+
+            {/* Progress hint */}
+            <p className="text-xs text-muted-foreground text-center pt-2">
+              {croppedCount}/{images.length} cropped
+              {croppedCount < images.length && " — tap thumbnails to switch"}
+            </p>
+
+            {/* Thumbnail strip with add-more button */}
+            <ThumbnailStrip />
+
+            {/* Actions */}
+            <div className="p-4 space-y-2 shrink-0">
+              {/* ✅ No more Next/Previous buttons — thumbnails handle switching */}
               <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  className="flex-1"
-                  onClick={() => setActiveImageIndex((prev) => Math.max(0, prev - 1))}
-                  disabled={activeImageIndex === 0}
-                >
-                  Previous
+                <Button variant="outline" className="flex-1 gap-1" onClick={cropCurrent}>
+                  <Crop className="w-4 h-4" /> Crop this image
                 </Button>
                 <Button
                   variant="outline"
-                  className="flex-1"
-                  onClick={() =>
-                    setActiveImageIndex((prev) => Math.min(images.length - 1, prev + 1))
-                  }
-                  disabled={activeImageIndex === images.length - 1}
+                  className="flex-1 gap-1"
+                  onClick={() => {
+                    // Skip crop for this image and move to next uncropped
+                    const nextUncropped = images.findIndex((img, i) => i !== activeIdx && !img.croppedSrc);
+                    if (nextUncropped !== -1) switchToImage(nextUncropped);
+                  }}
+                  disabled={images.every((img, i) => i === activeIdx || !!img.croppedSrc)}
                 >
-                  Next
+                  Skip this
                 </Button>
               </div>
-              <Button onClick={handleCropSave} className="w-full" size="lg">
+              <Button onClick={cropAndAdvance} className="w-full" size="lg">
                 <Crop className="w-4 h-4 mr-2" />
-                Save Crop
+                {croppedCount < images.length
+                  ? `Crop & next (${images.length - croppedCount - 1} remaining)`
+                  : "Done — go to filters →"}
               </Button>
             </div>
           </div>
         )}
 
+        {/* ── Step 2: Filter ────────────────────────────────────────────── */}
         {step === 2 && activePreviewSrc && (
-          <div className="flex-1 flex flex-col">
-            <div className="p-4 flex-1 flex items-center justify-center bg-muted/20">
-              <div className="relative w-full max-w-sm aspect-[4/5] rounded-lg overflow-hidden shadow-lg">
+          <div className="flex-1 flex flex-col min-h-0">
+
+            {/* Image preview */}
+            <div className="flex-1 flex items-center justify-center p-4 bg-muted/10 min-h-0">
+              <div className="relative w-full max-w-xs rounded-2xl overflow-hidden shadow-lg">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={activePreviewSrc}
-                  alt="Cropped Preview"
-                  className={`w-full h-full object-cover transition-all ${selectedFilter}`}
+                  alt="Preview"
+                  className={`w-full h-auto block transition-all ${activeImage?.filter || ""}`}
                 />
               </div>
             </div>
 
-            <div className="p-4 border-t bg-background space-y-4">
-              <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-none">
+            {/* Thumbnail strip */}
+            <ThumbnailStrip />
+
+            {/* Filter strip */}
+            <div className="px-4 pt-3 shrink-0">
+              <div className="flex gap-3 overflow-x-auto pb-1 scrollbar-none">
                 {FILTERS.map((f) => (
                   <button
                     key={f.name}
-                    onClick={() => setSelectedFilter(f.class)}
-                    className="flex flex-col items-center gap-2 flex-shrink-0"
+                    type="button"
+                    onClick={() => setFilterForActive(f.class)}
+                    className="flex flex-col items-center gap-1.5 shrink-0"
                   >
                     <div
-                      className={`w-16 h-20 rounded-md overflow-hidden ring-2 ring-offset-2 transition-all ${
-                        selectedFilter === f.class ? "ring-primary" : "ring-transparent"
+                      className={`w-14 h-14 rounded-xl overflow-hidden ring-2 ring-offset-2 transition-all ${
+                        activeImage?.filter === f.class ? "ring-primary" : "ring-transparent"
                       }`}
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -375,211 +580,113 @@ export function ImagePublisher() {
                   </button>
                 ))}
               </div>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  className="flex-1"
-                  onClick={() => setActiveImageIndex((prev) => Math.max(0, prev - 1))}
-                  disabled={activeImageIndex === 0}
-                >
-                  Previous Image
-                </Button>
-                <Button
-                  variant="outline"
-                  className="flex-1"
-                  onClick={() =>
-                    setActiveImageIndex((prev) => Math.min(images.length - 1, prev + 1))
-                  }
-                  disabled={activeImageIndex === images.length - 1}
-                >
-                  Next Image
-                </Button>
-              </div>
+            </div>
+
+            <div className="p-4 shrink-0">
               <Button onClick={() => setStep(3)} className="w-full" size="lg">
-                <Wand2 className="w-4 h-4 mr-2" />
-                Next
+                <Wand2 className="w-4 h-4 mr-2" /> Next — Add details
               </Button>
             </div>
           </div>
         )}
 
+        {/* ── Step 3: Details ───────────────────────────────────────────── */}
         {step === 3 && (
-          <div className="flex-1 p-4 space-y-6">
-            <div className="flex gap-4 p-4 rounded-xl border bg-muted/20">
-              <div className="w-20 aspect-[4/5] rounded-md overflow-hidden flex-shrink-0">
-                {activePreviewSrc ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={activePreviewSrc}
-                    alt="Preview"
-                    className={`w-full h-full object-cover ${selectedFilter}`}
-                  />
-                ) : (
-                  <div className="w-full h-full bg-muted" />
-                )}
-              </div>
-              <div className="flex flex-col justify-center gap-1">
-                <p className="font-medium flex items-center gap-1">
-                  <Check className="w-4 h-4 text-green-500" /> Ready to Publish
-                </p>
-                <p className="text-xs text-muted-foreground flex items-center gap-1">
-                  <ImageIcon className="w-3 h-3" /> {images.length} image(s)
-                </p>
-              </div>
+          <form onSubmit={handleSubmit(onSubmit)} className="flex-1 p-4 space-y-5 pb-8">
+
+            {/* Mini image strip */}
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {images.map((img) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={img.id}
+                  src={img.croppedSrc || img.originalSrc}
+                  alt="preview"
+                  className={`w-16 h-20 object-cover rounded-xl shrink-0 ${img.filter}`}
+                />
+              ))}
             </div>
 
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="title">Title *</Label>
-                <Input
-                  id="title"
-                  placeholder="What are you sharing?"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  required
-                />
-              </div>
+            {/* Title */}
+            <div className="space-y-1.5">
+              <Label htmlFor="title">Title <span className="text-destructive">*</span></Label>
+              <Input id="title" placeholder="What are you sharing?" {...register("title")} aria-invalid={!!errors.title} />
+              {errors.title && <p className="text-xs text-destructive">{errors.title.message}</p>}
+            </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="price">Price (Tomans)</Label>
-                <Input
-                  id="price"
-                  type="number"
-                  placeholder="e.g. 250000"
-                  value={price}
-                  onChange={(e) => setPrice(e.target.value)}
-                />
-              </div>
+            {/* Price */}
+            <div className="space-y-1.5">
+              <Label htmlFor="price">Price (Tomans)</Label>
+              <Input id="price" type="number" min="0" placeholder="e.g. 250000" {...register("price")} aria-invalid={!!errors.price} />
+              {errors.price && <p className="text-xs text-destructive">{errors.price.message}</p>}
+            </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="story">The Story</Label>
-                <Textarea
-                  id="story"
-                  placeholder="Tell the story behind this piece..."
-                  value={story}
-                  onChange={(e) => setStory(e.target.value)}
-                  rows={4}
-                />
-              </div>
+            {/* Story */}
+            <div className="space-y-1.5">
+              <Label htmlFor="story">
+                Story
+                <span className="text-muted-foreground font-normal ml-1">({watch("story")?.length ?? 0}/500)</span>
+              </Label>
+              <Textarea id="story" placeholder="Tell the story behind this piece..." rows={3} {...register("story")} aria-invalid={!!errors.story} />
+              {errors.story && <p className="text-xs text-destructive">{errors.story.message}</p>}
+            </div>
 
-              <div className="space-y-2">
-                <Label>Tags</Label>
-                <Input
-                  placeholder="Search tags..."
-                  value={tagQuery}
-                  onChange={(e) => setTagQuery(e.target.value)}
-                />
-                <div className="max-h-44 overflow-y-auto rounded-lg border p-2">
-                  <div className="flex flex-wrap gap-2">
-                    {filteredTags.map((tag) => (
-                      <Button
-                        key={tag.id}
-                        type="button"
-                        variant={selectedTagIds.includes(tag.id) ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => toggleTag(tag.id)}
-                      >
-                        {tag.name}
-                      </Button>
-                    ))}
-                    {filteredTags.length === 0 && (
-                      <p className="text-xs text-muted-foreground px-1 py-2">
-                        No tags match your search.
-                      </p>
-                    )}
-                  </div>
-                </div>
-                {selectedTagIds.length > 0 && (
-                  <p className="text-xs text-muted-foreground">
-                    {selectedTagIds.length} tag(s) selected
-                  </p>
-                )}
-              </div>
+            {/* ✅ Tags — dropdown combobox */}
+            <div className="space-y-1.5">
+              <Label>Tags</Label>
+              <TagsDropdown
+                tags={tags}
+                selectedIds={selectedTagIds}
+                onToggle={(id) =>
+                  setSelectedTagIds((prev) =>
+                    prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+                  )
+                }
+              />
+            </div>
 
-              <div className="space-y-2">
+            {/* Contact methods */}
+            <div className="space-y-3">
+              <div>
                 <Label>Contact Methods</Label>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={contactMethods.sms ? "default" : "outline"}
-                    onClick={() => toggleContactMethod("sms")}
-                  >
-                    SMS
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={contactMethods.telegram ? "default" : "outline"}
-                    onClick={() => toggleContactMethod("telegram")}
-                  >
-                    Telegram
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={contactMethods.whatsapp ? "default" : "outline"}
-                    onClick={() => toggleContactMethod("whatsapp")}
-                  >
-                    WhatsApp
-                  </Button>
-                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">Fill at least one so buyers can reach you</p>
               </div>
 
-              {contactMethods.sms && (
-                <div className="space-y-2">
-                  <Label htmlFor="sms">SMS Number</Label>
-                  <Input
-                    id="sms"
-                    placeholder="09xxxxxxxxx"
-                    value={contactValues.sms}
-                    onChange={(e) =>
-                      setContactValues((prev) => ({ ...prev, sms: e.target.value }))
-                    }
-                  />
-                </div>
-              )}
+              <div className="space-y-1.5">
+                <Label htmlFor="sms" className="text-sm font-normal">SMS / Phone</Label>
+                <Input id="sms" type="tel" placeholder="09xxxxxxxxx" {...register("sms")} aria-invalid={!!errors.sms} />
+                {errors.sms && <p className="text-xs text-destructive">{errors.sms.message}</p>}
+              </div>
 
-              {contactMethods.telegram && (
-                <div className="space-y-2">
-                  <Label htmlFor="telegram">Telegram Username</Label>
-                  <Input
-                    id="telegram"
-                    placeholder="username (without @)"
-                    value={contactValues.telegram}
-                    onChange={(e) =>
-                      setContactValues((prev) => ({ ...prev, telegram: e.target.value }))
-                    }
-                  />
+              <div className="space-y-1.5">
+                <Label htmlFor="telegram" className="text-sm font-normal">Telegram Username</Label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">@</span>
+                  <Input id="telegram" placeholder="username" className="pl-7" {...register("telegram")} aria-invalid={!!errors.telegram} />
                 </div>
-              )}
+                {errors.telegram && <p className="text-xs text-destructive">{errors.telegram.message}</p>}
+              </div>
 
-              {contactMethods.whatsapp && (
-                <div className="space-y-2">
-                  <Label htmlFor="whatsapp">WhatsApp Number</Label>
-                  <Input
-                    id="whatsapp"
-                    placeholder="98xxxxxxxxxx"
-                    value={contactValues.whatsapp}
-                    onChange={(e) =>
-                      setContactValues((prev) => ({ ...prev, whatsapp: e.target.value }))
-                    }
-                  />
-                </div>
-              )}
+              <div className="space-y-1.5">
+                <Label htmlFor="whatsapp" className="text-sm font-normal">WhatsApp Number</Label>
+                <Input id="whatsapp" type="tel" placeholder="98xxxxxxxxxx" {...register("whatsapp")} aria-invalid={!!errors.whatsapp} />
+                {errors.whatsapp && <p className="text-xs text-destructive">{errors.whatsapp.message}</p>}
+              </div>
             </div>
 
-            <div className="pt-4">
-              <Button
-                onClick={handlePublish}
-                className="w-full"
-                size="lg"
-                disabled={!title || loading}
-              >
-                {loading ? "Publishing..." : "Publish Post"}
-              </Button>
-            </div>
-          </div>
+            {publishError && (
+              <div className="rounded-xl bg-destructive/10 border border-destructive/20 p-3">
+                <p className="text-sm text-destructive">{publishError}</p>
+              </div>
+            )}
+
+            <Button type="submit" className="w-full" size="lg" disabled={loading}>
+              {loading
+                ? <span className="flex items-center gap-2"><ImageIcon className="w-4 h-4 animate-pulse" /> Publishing...</span>
+                : <span className="flex items-center gap-2"><Check className="w-4 h-4" /> Publish Post</span>
+              }
+            </Button>
+          </form>
         )}
       </div>
     </div>

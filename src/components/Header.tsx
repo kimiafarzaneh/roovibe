@@ -20,7 +20,7 @@ export function Header() {
         </Link>
 
         {/* Right side nav */}
-        <nav className="flex items-center gap-2">
+        {/* <nav className="flex items-center gap-2">
           {isLoading ? (
             // Don't flash buttons while we're checking auth status
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
@@ -47,7 +47,7 @@ export function Header() {
               <Link href="/">Sign in</Link>
             </Button>
           )}
-        </nav>
+        </nav> */}
       </div>
     </header>
   );

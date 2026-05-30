@@ -15,7 +15,9 @@ export function FeedClient({ posts }: FeedClientProps) {
   return (
     <>
       {posts.length > 0 ? (
-        <div className="p-4 columns-2 md:columns-3 lg:columns-4 gap-4 space-y-4">
+        // ✅ columns-2 mobile, 3 tablet, 4 desktop
+        // gap-x-4 for column gutters — space-y handled by mb-4 on each card
+        <div className="p-4 columns-2 md:columns-3 lg:columns-4 gap-x-4">
           {posts.map((post) => (
             <PostCard
               key={post.id}
