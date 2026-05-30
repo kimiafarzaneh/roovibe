@@ -39,8 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-# supabase
-/supabase
 
-# markdown files
 *.md
+!README.md
+
+# Supabase
+src/utils/supabase/
